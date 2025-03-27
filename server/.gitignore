@@ -1,0 +1,7 @@
+node_modules
+# Keep environment variables out of version control
+.env
+public/*
+!public/.gitkeep
+# Don't ignore prisma generated files
+!prisma/client
