@@ -5,6 +5,14 @@ export const API_ROUTES = {
     REGISTER: `${API_BASE_URL}/api/auth/register`,
     LOGIN: `${API_BASE_URL}/api/auth/login`,
     LOGOUT: `${API_BASE_URL}/api/auth/logout`,
+    REFRESH_TOKEN: `${API_BASE_URL}/api/auth/refresh-token`,
+    PROFILES: {
+      CREATE: `${API_BASE_URL}/api/auth/profiles`,
+      UPDATE: (profileId: string) => `${API_BASE_URL}/api/auth/profiles/${profileId}`,
+      DELETE: (profileId: string) => `${API_BASE_URL}/api/auth/profiles/${profileId}`,
+      ACTIVATE: (profileId: string) => `${API_BASE_URL}/api/auth/profiles/${profileId}/activate`,
+    },
+    DELETE_ACCOUNT: `${API_BASE_URL}/api/auth/account`,
   },
   CONTENT: {
     ALL: `${API_BASE_URL}/api/content/all`,
@@ -17,6 +25,7 @@ export const API_ROUTES = {
     RATE: (id: string) => `${API_BASE_URL}/api/content/content/${id}/rate`,
     REVIEW: (id: string) => `${API_BASE_URL}/api/content/content/${id}/review`,
     LIKE: (id: string) => `${API_BASE_URL}/api/content/content/${id}/like`,
+    GET_LIKES: `${API_BASE_URL}/api/content/likes`,
   },
   TV_SHOW: {
     SEASONS: (id: string) => `${API_BASE_URL}/api/content/tv-show/${id}/seasons`,
@@ -41,18 +50,11 @@ export const API_ROUTES = {
     LIKED_MOVIES: `${API_BASE_URL}/api/user/liked-movies`,
     WATCHLIST: {
       TOGGLE: (contentId: string) =>
-        `${API_BASE_URL}/api/watchlist/${contentId}`,
-      GET: `${API_BASE_URL}/api/watchlist`,
+        `${API_BASE_URL}/api/content/watchlist/${contentId}`,
+      GET: `${API_BASE_URL}/api/content/watchlist`,
     },
     CONTINUE_WATCHING: `${API_BASE_URL}/api/continue-watching`,
     RECOMMENDATIONS: `${API_BASE_URL}/api/recommendations`,
-    PROFILES: {
-      CREATE: `${API_BASE_URL}/api/user/profiles`,
-      UPDATE: (profileId: string) =>
-        `${API_BASE_URL}/api/user/profiles/${profileId}`,
-      DELETE: (profileId: string) =>
-        `${API_BASE_URL}/api/user/profiles/${profileId}`,
-    },
     SUBSCRIPTION: {
       UPDATE: `${API_BASE_URL}/api/user/subscription`,
       CANCEL: `${API_BASE_URL}/api/user/subscription/cancel`,

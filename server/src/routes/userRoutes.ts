@@ -1,5 +1,5 @@
 import express from "express";
-import { getUser, getWatchHistory } from "../controllers/userController";
+import { getUser, getWatchHistory,  } from "../controllers/userController";
 import { protect } from "../middleware/auth";
 
 const router = express.Router();

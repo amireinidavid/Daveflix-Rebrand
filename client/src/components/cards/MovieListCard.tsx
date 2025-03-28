@@ -70,7 +70,7 @@ export default function MovieListCard({ movie }: MovieListCardProps) {
               src={movie.posterImage}
               alt={movie.title}
               fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+              sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, 25vw"
               className="object-cover transition-transform duration-500 hover:scale-105"
               priority
             />
@@ -83,7 +83,7 @@ export default function MovieListCard({ movie }: MovieListCardProps) {
           {/* Glass effect overlay on hover */}
           {isHovered && (
             <div className="absolute inset-0 backdrop-blur-sm bg-black/60 flex flex-col items-center justify-center p-4 space-y-3 transition-all duration-300 animate-fade">
-              <Button variant="default" size="sm" className="rounded-full w-36 shadow-glow">
+              <Button variant="default" size="sm" className="rounded-full w-full sm:w-36 shadow-glow">
                 <Play className="mr-2 h-4 w-4" /> Play Now
               </Button>
               
@@ -137,10 +137,10 @@ export default function MovieListCard({ movie }: MovieListCardProps) {
           </div>
         </div>
         
-        <div className="p-4 space-y-2">
-          <h3 className="font-bold text-lg line-clamp-1 group-hover:text-primary transition-colors">{movie.title}</h3>
+        <div className="p-3 sm:p-4 space-y-1 sm:space-y-2">
+          <h3 className="font-bold text-sm sm:text-lg line-clamp-1 group-hover:text-primary transition-colors">{movie.title}</h3>
           
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1 sm:gap-2">
             {movie.genres && movie.genres.slice(0, 2).map((genre: any) => (
               <Badge key={genre.id || genre.name} variant="secondary" className="text-xs bg-secondary/50 hover:bg-secondary/70">
                 {genre.name}
@@ -148,7 +148,7 @@ export default function MovieListCard({ movie }: MovieListCardProps) {
             ))}
           </div>
           
-          <div className="flex items-center text-sm text-muted-foreground space-x-3">
+          <div className="flex items-center text-xs sm:text-sm text-muted-foreground space-x-2 sm:space-x-3">
             <div className="flex items-center">
               <Calendar className="h-3 w-3 mr-1" />
               <span>{movie.releaseYear}</span>

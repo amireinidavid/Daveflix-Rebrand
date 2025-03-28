@@ -55,6 +55,7 @@
     "react-icons": "^5.5.0",
     "recharts": "^2.15.1",
     "shaka-player": "^4.13.6",
+    "sonner": "^2.0.2",
     "swiper": "^11.2.4",
     "tailwind-merge": "^3.0.2",
     "tailwindcss-animate": "^1.0.7",

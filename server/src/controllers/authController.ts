@@ -1,95 +1,140 @@
+import { prisma } from "../server";
 import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { prisma } from "../server";
+import { v4 as uuidv4 } from "uuid";
+import { UserRole } from "@prisma/client";
 
-// Helper function to set auth cookie
-const setAuthCookie = (res: Response, token: string) => {
-  // Set HTTP-only cookie that expires in 30 days
-  res.cookie("token", token, {
+// Define types for request user
+interface RequestWithUser extends Request {
+  user?: {
+    userId: string;
+    email: string;
+    role: string;
+  };
+}
+
+// Helper function to generate tokens
+function generateTokens(userId: string, email: string, role: string) {
+  const accessToken = jwt.sign(
+    {
+      userId,
+      email,
+      role,
+    },
+    process.env.JWT_SECRET!,
+    { expiresIn: "60m" }
+  );
+  const refreshToken = uuidv4();
+  return { accessToken, refreshToken };
+}
+
+// Helper function to set auth cookies
+async function setAuthCookies(
+  res: Response,
+  accessToken: string,
+  refreshToken: string
+) {
+  res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // Use secure in production
+    secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    path: "/",
+    maxAge: 60 * 60 * 1000, // 1 hour
   });
-};
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
+}
 
 // Register a new user
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password, firstName, lastName } = req.body;
+    const { firstName, lastName, email, password } = req.body;
+
+    // Validate input
+    if (!firstName || !lastName || !email || !password) {
+      res.status(400).json({
+        success: false,
+        error: "Please provide firstName, lastName, email and password",
+      });
+      return;
+    }
 
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-
+    const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       res.status(400).json({
         success: false,
-        message: "User already exists",
+        error: "User with this email already exists",
       });
       return;
     }
 
     // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     // Create user
     const user = await prisma.user.create({
       data: {
-        email,
-        password: hashedPassword,
         firstName,
         lastName,
-        // Create default profile
-        profiles: {
-          create: {
-            name: firstName || "Default Profile",
-          },
-        },
-      },
-      include: {
-        profiles: true,
+        email,
+        password: hashedPassword,
+        role: UserRole.USER,
       },
     });
 
-    // Create token
-    const token = jwt.sign(
-      { id: user.id },
-      process.env.JWT_SECRET || "fallback-secret",
-      { expiresIn: "30d" }
+    // Create profile for the user
+    const profile = await prisma.profile.create({
+      data: {
+        name: `${firstName}'s Profile`,
+        avatar: `https://cdn.vectorstock.com/i/1000x1000/44/01/default-avatar-photo-placeholder-icon-grey-vector-38594401.webp`,
+        userId: user.id
+      }
+    });
+
+    // Generate tokens
+    const { accessToken, refreshToken } = generateTokens(
+      user.id,
+      user.email,
+      user.role
     );
 
-    // Set auth cookie
-    setAuthCookie(res, token);
-
-    res.cookie("role", user.role, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      path: "/",
+    // Set active profile
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { 
+        activeProfileId: profile.id
+      },
     });
 
+    // Store refresh token in a cookie instead of database
+    await setAuthCookies(res, accessToken, refreshToken);
+
+    // Return success response
     res.status(201).json({
       success: true,
-      data: {
+      message: "Registration successful! Your profile has been created.",
+      user: {
         id: user.id,
-        email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        profiles: user.profiles,
-        token,
+        email: user.email,
+        role: user.role,
+        profile: {
+          id: profile.id,
+          avatar: profile.avatar,
+        }
       },
     });
   } catch (error) {
-    console.error("Register error:", error);
-    res.status(500).json({
+    console.error("Registration error:", error);
+    res.status(500).json({ 
       success: false,
-      message: "Error creating user",
+      error: "Registration failed. Please try again later." 
     });
   }
 };
@@ -99,169 +144,279 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
 
-    // Find user
+    // Validate input
+    if (!email || !password) {
+      res.status(400).json({
+        success: false,
+        error: "Please provide email and password",
+      });
+      return;
+    }
+
+    // Find user with profiles
     const user = await prisma.user.findUnique({
       where: { email },
       include: {
         profiles: true,
-        subscription: true,
-      },
+        activeProfile: true
+      }
     });
 
-    if (!user) {
+    // Check if user exists and password is correct
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       res.status(401).json({
         success: false,
-        message: "Invalid credentials",
+        error: "Invalid email or password",
       });
       return;
     }
 
-    // Check password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-      return;
-    }
-
-    // Create token
-    const token = jwt.sign(
-      { id: user.id },
-      process.env.JWT_SECRET || "fallback-secret",
-      { expiresIn: "30d" }
+    // Generate tokens
+    const { accessToken, refreshToken } = generateTokens(
+      user.id,
+      user.email,
+      user.role
     );
 
-    // Set auth cookie
-    setAuthCookie(res, token);
+    // Set cookies
+    await setAuthCookies(res, accessToken, refreshToken);
 
-    res.cookie("role", user.role, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      path: "/",
-    });
-
-    res.json({
+    // Return success response
+    res.status(200).json({
       success: true,
-      data: {
+      message: "Login successful",
+      user: {
         id: user.id,
-        email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        email: user.email,
+        role: user.role,
         profiles: user.profiles,
-        subscription: user.subscription,
-        token,
+        activeProfile: user.activeProfile
       },
     });
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({
+    res.status(500).json({ 
       success: false,
-      message: "Error logging in",
+      error: "Login failed. Please try again later." 
     });
-    return;
   }
 };
 
 // Logout user
 export const logout = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Clear the auth cookie
-    res.clearCookie("token", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      path: "/",
-    });
+    // Clear cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
 
-    res.json({
+    res.status(200).json({
       success: true,
       message: "Logged out successfully",
     });
   } catch (error) {
     console.error("Logout error:", error);
-    res.status(500).json({
+    res.status(500).json({ 
       success: false,
-      message: "Error logging out",
+      error: "Logout failed" 
     });
   }
 };
 
-// Create new profile
-export const createProfile = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+// Refresh access token
+export const refreshToken = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user.id; // From auth middleware
-    const { name, isKids, pin, avatar, maturityLevel, language } = req.body;
+    // Get refresh token from cookies
+    const refreshToken = req.cookies.refreshToken;
+    
+    if (!refreshToken) {
+      res.status(401).json({
+        success: false,
+        error: "Refresh token not found",
+      });
+      return;
+    }
 
-    // Check profile limit based on subscription
+    // Verify token using JWT secret
+    try {
+      const decoded = jwt.verify(req.cookies.accessToken, process.env.JWT_SECRET!) as any;
+      const userId = decoded.userId;
+      
+      // Find user
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!user) {
+        res.status(401).json({
+          success: false,
+          error: "Invalid user",
+        });
+        return;
+      }
+
+      // Generate new tokens
+      const { accessToken, refreshToken: newRefreshToken } = generateTokens(
+        user.id,
+        user.email,
+        user.role
+      );
+
+      // Set cookies
+      await setAuthCookies(res, accessToken, newRefreshToken);
+
+      res.status(200).json({
+        success: true,
+        message: "Token refreshed successfully",
+      });
+    } catch (error) {
+      res.status(401).json({
+        success: false,
+        error: "Invalid token",
+      });
+    }
+  } catch (error) {
+    console.error("Refresh token error:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to refresh token" 
+    });
+  }
+};
+
+// Get current user
+export const getCurrentUser = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    // User ID should be available from auth middleware
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: "Not authenticated",
+      });
+      return;
+    }
+
+    // Find user with profiles
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
         profiles: true,
-        subscription: true,
-      },
+        activeProfile: true,
+        watchHistory: true,
+        watchlist: true
+      }
     });
 
     if (!user) {
       res.status(404).json({
         success: false,
-        message: "User not found",
+        error: "User not found",
       });
       return;
     }
 
-    const profileLimit = user.subscription?.maxProfiles || 5;
-    if (user.profiles.length >= profileLimit) {
+    // Return user data
+    res.status(200).json({
+      success: true,
+      user: {
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+        profiles: user.profiles,
+        activeProfile: user.activeProfile,
+        watchHistory: user.watchHistory,
+        watchlist: user.watchlist
+      },
+    });
+  } catch (error) {
+    console.error("Get current user error:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to get user data" 
+    });
+  }
+};
+
+// Create profile
+export const createProfile = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: "Not authenticated",
+      });
+      return;
+    }
+
+    const { name, isKids, avatar } = req.body;
+
+    if (!name) {
       res.status(400).json({
         success: false,
-        message: "Profile limit reached",
+        error: "Profile name is required",
       });
       return;
     }
 
-    // Create profile with all fields
+    // Check if user has reached max profiles (e.g., 5)
+    const profileCount = await prisma.profile.count({
+      where: { userId },
+    });
+
+    if (profileCount >= 5) {
+      res.status(400).json({
+        success: false,
+        error: "Maximum number of profiles reached",
+      });
+      return;
+    }
+
+    // Create profile
     const profile = await prisma.profile.create({
       data: {
         name,
-        isKids,
-        pin,
-        avatar,
-        maturityLevel: maturityLevel || 18,
-        language: language || "en",
+        isKids: isKids || false,
+        avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`,
         userId,
       },
     });
 
     res.status(201).json({
       success: true,
-      data: profile,
+      message: "Profile created successfully",
+      profile,
     });
   } catch (error) {
     console.error("Create profile error:", error);
-    res.status(500).json({
+    res.status(500).json({ 
       success: false,
-      message: "Error creating profile",
+      error: "Failed to create profile" 
     });
   }
 };
 
 // Update profile
-export const updateProfile = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const updateProfile = async (req: RequestWithUser, res: Response): Promise<void> => {
   try {
+    const userId = req.user?.userId;
     const { profileId } = req.params;
-    const userId = req.user.id; // From auth middleware
-    const { name, isKids, pin, avatar, maturityLevel, language } = req.body;
+    
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: "Not authenticated",
+      });
+      return;
+    }
 
-    // Verify profile belongs to user
+    // Check if profile belongs to user
     const existingProfile = await prisma.profile.findFirst({
       where: {
         id: profileId,
@@ -272,47 +427,108 @@ export const updateProfile = async (
     if (!existingProfile) {
       res.status(404).json({
         success: false,
-        message: "Profile not found",
+        error: "Profile not found",
       });
       return;
     }
 
-    // Update profile with all fields
-    const profile = await prisma.profile.update({
+    const { name, isKids, avatar, pin } = req.body;
+
+    // Update profile
+    const updatedProfile = await prisma.profile.update({
       where: { id: profileId },
       data: {
-        name,
-        isKids,
-        pin,
-        avatar,
-        maturityLevel,
-        language,
+        name: name || undefined,
+        isKids: isKids !== undefined ? isKids : undefined,
+        avatar: avatar || undefined,
+        pin: pin || undefined,
       },
     });
 
-    res.json({
+    res.status(200).json({
       success: true,
-      data: profile,
+      message: "Profile updated successfully",
+      profile: updatedProfile,
     });
   } catch (error) {
     console.error("Update profile error:", error);
-    res.status(500).json({
+    res.status(500).json({ 
       success: false,
-      message: "Error updating profile",
+      error: "Failed to update profile" 
+    });
+  }
+};
+
+// Set active profile
+export const setActiveProfile = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    const { profileId } = req.params;
+    
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: "Not authenticated",
+      });
+      return;
+    }
+
+    // Check if profile belongs to user
+    const existingProfile = await prisma.profile.findFirst({
+      where: {
+        id: profileId,
+        userId,
+      },
+    });
+
+    if (!existingProfile) {
+      res.status(404).json({
+        success: false,
+        error: "Profile not found",
+      });
+      return;
+    }
+
+    // Set active profile
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        activeProfileId: profileId,
+      },
+      include: {
+        activeProfile: true,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Active profile set successfully",
+      activeProfile: updatedUser.activeProfile,
+    });
+  } catch (error) {
+    console.error("Set active profile error:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to set active profile" 
     });
   }
 };
 
 // Delete profile
-export const deleteProfile = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const deleteProfile = async (req: RequestWithUser, res: Response): Promise<void> => {
   try {
+    const userId = req.user?.userId;
     const { profileId } = req.params;
-    const userId = req.user.id; // From auth middleware
+    
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: "Not authenticated",
+      });
+      return;
+    }
 
-    // Verify profile belongs to user
+    // Check if profile belongs to user
     const existingProfile = await prisma.profile.findFirst({
       where: {
         id: profileId,
@@ -323,12 +539,12 @@ export const deleteProfile = async (
     if (!existingProfile) {
       res.status(404).json({
         success: false,
-        message: "Profile not found",
+        error: "Profile not found",
       });
       return;
     }
 
-    // Don't allow deleting the last profile
+    // Check if it's the last profile
     const profileCount = await prisma.profile.count({
       where: { userId },
     });
@@ -336,25 +552,79 @@ export const deleteProfile = async (
     if (profileCount <= 1) {
       res.status(400).json({
         success: false,
-        message: "Cannot delete the last profile",
+        error: "Cannot delete the last profile",
       });
       return;
     }
+
+    // Check if it's the active profile
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
 
     // Delete profile
     await prisma.profile.delete({
       where: { id: profileId },
     });
 
-    res.json({
+    // If deleted profile was active, set another profile as active
+    if (user?.activeProfileId === profileId) {
+      const anotherProfile = await prisma.profile.findFirst({
+        where: { userId },
+      });
+
+      if (anotherProfile) {
+        await prisma.user.update({
+          where: { id: userId },
+          data: { activeProfileId: anotherProfile.id },
+        });
+      }
+    }
+
+    res.status(200).json({
       success: true,
       message: "Profile deleted successfully",
     });
   } catch (error) {
     console.error("Delete profile error:", error);
-    res.status(500).json({
+    res.status(500).json({ 
       success: false,
-      message: "Error deleting profile",
+      error: "Failed to delete profile" 
+    });
+  }
+};
+
+// Delete account
+export const deleteAccount = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: "Not authenticated",
+      });
+      return;
+    }
+
+    // Delete user (cascading delete will handle related records)
+    await prisma.user.delete({
+      where: { id: userId },
+    });
+
+    // Clear cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
+
+    res.status(200).json({
+      success: true,
+      message: "Account deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete account error:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to delete account" 
     });
   }
 };

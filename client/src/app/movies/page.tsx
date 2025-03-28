@@ -34,6 +34,17 @@ const MoviesListPage = () => {
     const loadContent = async () => {
       setIsLoading(true);
       try {
+        // Import auth store to check authentication
+        const { useAuthStore } = await import('@/store/useAuthStore');
+        const isAuthenticated = useAuthStore.getState().isAuthenticated;
+        
+        // If not authenticated, check auth status
+        if (!isAuthenticated) {
+          const checkAuth = useAuthStore.getState().checkAuth;
+          await checkAuth();
+        }
+        
+        // Now fetch content and genres
         await Promise.all([
           fetchAllContent(),
           fetchGenres()
@@ -233,7 +244,7 @@ const MoviesListPage = () => {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-6">
                   {paginatedMovies.map((movie) => (
                     <MovieListCard key={movie.id} movie={movie} />
                   ))}

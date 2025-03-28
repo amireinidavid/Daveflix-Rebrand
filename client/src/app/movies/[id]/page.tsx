@@ -24,7 +24,8 @@ import {
   Globe,
   Film,
   Award,
-  Users
+  Users,
+  X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,8 +34,10 @@ import { Progress } from "@/components/ui/progress";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuthStore } from "@/store/useAuthStore";
 import useMovieStore from "@/store/useMovieStore";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 
-const MoviesDetailsPage = () => {
+const MovieDetailsPage = () => {
   const router = useRouter();
   const { id } = useParams();
   const { 
@@ -43,7 +46,10 @@ const MoviesDetailsPage = () => {
     loading, 
     error,
     toggleWatchlist,
-    toggleLike
+    toggleLike,
+    watchlist,
+    getWatchlist,
+    getLikes
   } = useMovieStore();
   const { isAuthenticated } = useAuthStore();
   
@@ -55,69 +61,173 @@ const MoviesDetailsPage = () => {
   const [progress, setProgress] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
+  const [isLiking, setIsLiking] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      fetchContentById(id as string);
+    const fetchData = async () => {
+      if (id) {
+        await fetchContentById(id as string);
+        // Also fetch the watchlist and likes to check if this movie is in them
+        await Promise.all([getWatchlist(), getLikes()]);
+      }
+    };
+    
+    fetchData();
+  }, [id, fetchContentById, getWatchlist, getLikes]);
+
+  // Check if the current movie is in the watchlist whenever watchlist or movie changes
+  useEffect(() => {
+    if (watchlist && movie) {
+      const isInList = watchlist.some(item => item.contentId === movie.id);
+      setIsInWatchlist(isInList);
     }
-  }, [id, fetchContentById]);
+  }, [watchlist, movie]);
+
+  // Check if the current movie is liked
+  useEffect(() => {
+    if (movie?.likes && movie.likes.length > 0) {
+      setIsLiked(true);
+    } else {
+      setIsLiked(false);
+    }
+  }, [movie]);
 
   const handleWatchlistToggle = async () => {
     if (isAuthenticated && movie) {
       try {
+        setIsAddingToWatchlist(true);
         await toggleWatchlist(movie.id);
         setIsInWatchlist(!isInWatchlist);
+        
+        toast.success(isInWatchlist 
+          ? "Removed from your watchlist" 
+          : "Added to your watchlist"
+        );
       } catch (error) {
         console.error("Error toggling watchlist:", error);
+        toast.error("Failed to update watchlist");
+      } finally {
+        setIsAddingToWatchlist(false);
       }
+    } else if (!isAuthenticated) {
+      toast.error("Please sign in to add to watchlist");
     }
   };
 
   const handleLikeToggle = async () => {
     if (isAuthenticated && movie) {
       try {
+        setIsLiking(true);
         await toggleLike(movie.id);
         setIsLiked(!isLiked);
+        
+        toast.success(isLiked 
+          ? "Removed from your likes" 
+          : "Added to your likes"
+        );
       } catch (error) {
         console.error("Error toggling like:", error);
+        toast.error("Failed to update like status");
+      } finally {
+        setIsLiking(false);
       }
+    } else if (!isAuthenticated) {
+      toast.error("Please sign in to like content");
+    }
+  };
+
+  const handleShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: movie?.title || 'Check out this movie',
+          text: `Check out ${movie?.title} on Daveflix`,
+          url: window.location.href,
+        });
+        toast.success("Shared successfully");
+      } catch (error) {
+        console.error("Error sharing:", error);
+        // User probably canceled the share
+        if (error instanceof Error && error.name !== 'AbortError') {
+          toast.error("Failed to share");
+        }
+      }
+    } else {
+      // Fallback for browsers that don't support the Web Share API
+      navigator.clipboard.writeText(window.location.href);
+      toast.success("Link copied to clipboard");
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!isAuthenticated) {
+      toast.error("Please sign in to download content");
+      return;
+    }
+    
+    if (!movie) return;
+    
+    try {
+      setIsDownloading(true);
+      
+      // Determine which video quality to download based on availability
+      const videoUrl = movie.videoHD || movie.videoSD || movie.videoUrl || movie.videoFile;
+      
+      if (!videoUrl) {
+        toast.error("No downloadable content available");
+        return;
+      }
+      
+      // Create a temporary anchor element to trigger download
+      const link = document.createElement('a');
+      link.href = videoUrl;
+      link.download = `${movie.title.replace(/\s+/g, '_')}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success("Download started");
+    } catch (error) {
+      console.error("Error downloading:", error);
+      toast.error("Failed to download content");
+    } finally {
+      setIsDownloading(false);
     }
   };
 
   const handlePlayTrailer = () => {
     setShowTrailer(true);
-    if (movie?.trailerType === "UPLOADED" && videoRef.current) {
-      videoRef.current.play();
-      setIsPlaying(true);
-    }
+    
+    // For uploaded videos, we need to wait for the DOM to update before playing
+    setTimeout(() => {
+      if (movie?.trailerType === "UPLOADED" && videoRef.current) {
+        videoRef.current.muted = isMuted;
+        videoRef.current.play()
+          .then(() => {
+            setIsPlaying(true);
+          })
+          .catch(error => {
+            console.error("Error playing video:", error);
+            // Some browsers require user interaction before playing
+            setIsPlaying(false);
+          });
+      }
+    }, 100);
   };
 
   const handleCloseTrailer = () => {
-    if (movie?.trailerType === "UPLOADED" && videoRef.current) {
-      videoRef.current.pause();
-    }
     setShowTrailer(false);
     setIsPlaying(false);
-  };
-
-  const handleWatchFullMovie = () => {
-    if (movie) {
-      router.push(`/watch/${movie.id}`);
+    
+    // Make sure to pause the video when closing
+    if (videoRef.current) {
+      videoRef.current.pause();
     }
   };
 
-  const handleDownloadMovie = () => {
-    // Implement download functionality based on your requirements
-    if (movie) {
-      // For example, if you have different quality options:
-      const downloadUrl = movie.videoSD || movie.videoHD || movie.video4K || movie.videoUrl;
-      if (downloadUrl) {
-        window.open(downloadUrl, '_blank');
-      }
-    }
-  };
-
-  const togglePlay = () => {
+  const handlePlayPause = () => {
     if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
@@ -128,22 +238,10 @@ const MoviesDetailsPage = () => {
     }
   };
 
-  const toggleMute = () => {
+  const handleMuteToggle = () => {
     if (videoRef.current) {
-      videoRef.current.muted = !videoRef.current.muted;
+      videoRef.current.muted = !isMuted;
       setIsMuted(!isMuted);
-    }
-  };
-
-  const handleFullscreen = () => {
-    if (videoRef.current) {
-      if (videoRef.current.requestFullscreen) {
-        videoRef.current.requestFullscreen();
-      }
-    } else if (iframeRef.current) {
-      if (iframeRef.current.requestFullscreen) {
-        iframeRef.current.requestFullscreen();
-      }
     }
   };
 
@@ -154,401 +252,335 @@ const MoviesDetailsPage = () => {
     }
   };
 
-  // Extract YouTube video ID from URL
-  const getYoutubeVideoId = (url: string) => {
-    if (!url) return null;
-    
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    
-    return (match && match[2].length === 11) ? match[2] : null;
-  };
-
-  // Format duration to hours and minutes
-  const formatDuration = (minutes: number | undefined) => {
-    if (!minutes) return "N/A";
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-  };
-
-  const formatTime = (seconds: number) => {
-    if (isNaN(seconds)) return "0:00";
-    
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
+  const handleFullscreen = () => {
+    if (videoRef.current) {
+      if (videoRef.current.requestFullscreen) {
+        videoRef.current.requestFullscreen();
+      }
+    }
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[70vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading movie details...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center px-4">
-        <h2 className="text-2xl font-bold mb-4">Error Loading Movie</h2>
-        <p className="text-muted-foreground mb-6">{error}</p>
-        <Button onClick={() => fetchContentById(id as string)}>Try Again</Button>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="text-destructive text-5xl">⚠️</div>
+          <h2 className="text-2xl font-bold">Error Loading Movie</h2>
+          <p className="text-muted-foreground">{error}</p>
+          <Button onClick={() => router.back()}>Go Back</Button>
+        </div>
       </div>
     );
   }
 
   if (!movie) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center px-4">
-        <h2 className="text-2xl font-bold mb-4">Movie Not Found</h2>
-        <p className="text-muted-foreground mb-6">The movie you're looking for doesn't exist or has been removed.</p>
-        <Link href="/movies">
-          <Button>Browse Movies</Button>
-        </Link>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="text-muted-foreground text-5xl">🎬</div>
+          <h2 className="text-2xl font-bold">Movie Not Found</h2>
+          <p className="text-muted-foreground">The movie you're looking for doesn't exist or has been removed.</p>
+          <Button onClick={() => router.push('/movies')}>Browse Movies</Button>
+        </div>
       </div>
     );
   }
 
-  const youtubeId = movie.trailerUrl ? getYoutubeVideoId(movie.trailerUrl) : null;
-
   return (
-    <>
-      <div className="relative min-h-screen">
-        {/* Backdrop Image */}
-        <div className="absolute inset-0 z-0">
-          {movie.backdropImage ? (
-            <Image
-              src={movie.backdropImage}
-              alt={movie.title}
-              fill
-              priority
-              className="object-cover"
-            />
-          ) : movie.posterImage ? (
-            <Image
-              src={movie.posterImage}
-              alt={movie.title}
-              fill
-              priority
-              className="object-cover blur-sm scale-110"
-            />
-          ) : (
-            <div className="w-full h-full bg-gradient-to-b from-background/20 to-background" />
-          )}
-          {/* Gradient Overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/90 to-background/40" />
+    <div className="min-h-screen bg-background">
+      {/* Hero Section with Backdrop */}
+      <div className="relative w-full h-[70vh]">
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent z-10" />
+        {movie.backdropImage ? (
+          <Image
+            src={movie.backdropImage}
+            alt={movie.title}
+            fill
+            className="object-cover"
+            priority
+          />
+        ) : (
+          <Image
+            src={movie.posterImage}
+            alt={movie.title}
+            fill
+            className="object-cover object-top"
+            priority
+          />
+        )}
+        
+        {/* Back button */}
+        <div className="absolute top-4 left-4 z-20">
+          <Button 
+            variant="ghost" 
+            size="icon"
+            className="bg-black/30 hover:bg-black/50 text-white rounded-full"
+            onClick={() => router.back()}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
         </div>
+      </div>
 
-        {/* Content */}
-        <div className="relative z-10 pt-8 pb-16">
-          <div className="container mx-auto px-4">
-            {/* Back to movies link */}
-            <Link href="/movies" className="inline-flex items-center text-sm text-muted-foreground hover:text-primary mb-8">
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Back to Movies
-            </Link>
-
-            {/* Main content area */}
-            <div className="grid grid-cols-1 lg:grid-cols-[350px_1fr] gap-8 lg:gap-12">
-              {/* Left column - Poster and quick actions */}
-              <div className="space-y-6">
-                {/* Poster with glow effect */}
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5 }}
-                  className="relative aspect-[2/3] w-full rounded-xl overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.3)] border border-white/10"
-                >
-                  {movie.posterImage ? (
-                    <Image
-                      src={movie.posterImage}
-                      alt={movie.title}
-                      fill
-                      priority
-                      className="object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-card flex items-center justify-center">
-                      <span className="text-muted-foreground">No Image</span>
-                    </div>
-                  )}
-                </motion.div>
-
-                {/* Quick action buttons */}
-                <div className="space-y-3">
-                  <Button 
-                    variant="default" 
-                    size="lg" 
-                    className="w-full flex items-center justify-center gap-2"
-                    onClick={handlePlayTrailer}
-                  >
-                    <Play className="h-5 w-5" />
-                    Watch Trailer
-                  </Button>
-                  
-                  <Button 
-                    variant="secondary" 
-                    size="lg" 
-                    className="w-full flex items-center justify-center gap-2 bg-primary/90 hover:bg-primary text-primary-foreground"
-                    onClick={handleWatchFullMovie}
-                  >
-                    <Play className="h-5 w-5" />
-                    Watch Full Movie
-                  </Button>
-                  
-                  <div className="grid grid-cols-3 gap-3">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="aspect-square h-12"
-                      onClick={handleWatchlistToggle}
-                    >
-                      {isInWatchlist ? (
-                        <Check className="h-5 w-5" />
-                      ) : (
-                        <Plus className="h-5 w-5" />
-                      )}
-                    </Button>
-                    
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="aspect-square h-12"
-                      onClick={handleLikeToggle}
-                    >
-                      <Heart className={`h-5 w-5 ${isLiked ? "fill-red-500 text-red-500" : ""}`} />
-                    </Button>
-                    
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="aspect-square h-12"
-                      onClick={handleDownloadMovie}
-                      disabled={!movie.videoUrl && !movie.videoFile && !movie.videoSD && !movie.videoHD && !movie.video4K}
-                    >
-                      <Download className="h-5 w-5" />
-                    </Button>
+      {/* Content Section */}
+      <div className="container mx-auto px-4 -mt-40 relative z-20">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {/* Poster Column */}
+          <div className="md:col-span-1">
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="relative aspect-[2/3] rounded-lg overflow-hidden shadow-xl"
+            >
+              <Image
+                src={movie.posterImage}
+                alt={movie.title}
+                fill
+                className="object-cover"
+              />
+            </motion.div>
+            
+            {/* Action Buttons */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3, duration: 0.5 }}
+              className="mt-6 grid grid-cols-2 gap-3"
+            >
+              <Button 
+                variant="default" 
+                className="w-full flex items-center justify-center gap-2"
+                onClick={handlePlayTrailer}
+              >
+                <Play className="h-4 w-4" />
+                <span>Play Trailer</span>
+              </Button>
+              <Button 
+                variant="default" 
+                className="w-full flex items-center justify-center gap-2"
+                onClick={() => router.push(`/watch/${movie.id}`)}
+              >
+                <Play className="h-4 w-4" />
+                <span>Play</span>
+              </Button>
+              
+              <Button 
+                variant={isInWatchlist ? "secondary" : "outline"}
+                className={`w-full flex items-center justify-center gap-2 ${
+                  isInWatchlist ? "bg-green-600 hover:bg-green-700 text-white" : ""
+                }`}
+                onClick={handleWatchlistToggle}
+                disabled={isAddingToWatchlist}
+              >
+                {isAddingToWatchlist ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : isInWatchlist ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                <span>{isInWatchlist ? "Added" : "Watchlist"}</span>
+              </Button>
+              
+              <Button 
+                variant={isLiked ? "secondary" : "outline"}
+                className={`w-full flex items-center justify-center gap-2 ${
+                  isLiked ? "bg-red-600 hover:bg-red-700 text-white" : ""
+                }`}
+                onClick={handleLikeToggle}
+                disabled={isLiking}
+              >
+                {isLiking ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Heart className={`h-4 w-4 ${isLiked ? "fill-current" : ""}`} />
+                )}
+                <span>{isLiked ? "Liked" : "Like"}</span>
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                className="w-full flex items-center justify-center gap-2"
+                onClick={handleShare}
+              >
+                <Share2 className="h-4 w-4" />
+                <span>Share</span>
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                className="w-full flex items-center justify-center gap-2 col-span-2"
+                onClick={handleDownload}
+                disabled={isDownloading || !movie.videoUrl && !movie.videoFile && !movie.videoSD && !movie.videoHD}
+              >
+                {isDownloading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                <span>Download</span>
+              </Button>
+            </motion.div>
+          </div>
+          
+          {/* Details Column */}
+          <div className="md:col-span-2">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+            >
+              <h1 className="text-4xl font-bold text-white mb-2">{movie.title}</h1>
+              
+              <div className="flex flex-wrap items-center gap-3 mb-4 text-sm text-muted-foreground">
+                {movie.releaseYear && (
+                  <div className="flex items-center gap-1">
+                    <Calendar className="h-4 w-4" />
+                    <span>{movie.releaseYear}</span>
                   </div>
-                </div>
-
-                {/* Technical details card */}
-                <div className="bg-card/50 backdrop-blur-sm rounded-xl border border-border/50 p-4 space-y-4">
-                  <h3 className="font-medium">Movie Details</h3>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Type</p>
-                      <p className="capitalize">{movie.type.replace('_', ' ').toLowerCase()}</p>
-                    </div>
-                    
-                    <div>
-                      <p className="text-sm text-muted-foreground">Release Year</p>
-                      <p>{movie.releaseYear}</p>
-                    </div>
-                    
-                    <div>
-                      <p className="text-sm text-muted-foreground">Duration</p>
-                      <p>{formatDuration(movie.duration)}</p>
-                    </div>
-                    
-                    <div>
-                      <p className="text-sm text-muted-foreground">Rating</p>
-                      <p>{movie.maturityRating}</p>
-                    </div>
+                )}
+                
+                {movie.duration && (
+                  <div className="flex items-center gap-1">
+                    <Clock className="h-4 w-4" />
+                    <span>{Math.floor(movie.duration / 60)}h {movie.duration % 60}m</span>
                   </div>
-                  
-                  <Separator />
-                  
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Available Quality</p>
-                    <div className="flex flex-wrap gap-2">
-                      {movie.videoSD && (
-                        <Badge variant="outline" className="bg-card/50">SD</Badge>
-                      )}
-                      {movie.videoHD && (
-                        <Badge variant="outline" className="bg-card/50">HD</Badge>
-                      )}
-                      {movie.video4K && (
-                        <Badge variant="outline" className="bg-card/50">4K</Badge>
-                      )}
-                      {movie.videoHDR && (
-                        <Badge variant="outline" className="bg-card/50">HDR</Badge>
-                      )}
-                      {!movie.videoSD && !movie.videoHD && !movie.video4K && !movie.videoHDR && (
-                        <span className="text-sm text-muted-foreground">Not specified</span>
-                      )}
-                    </div>
+                )}
+                
+                {movie.maturityRating && (
+                  <Badge variant="outline" className="text-xs">
+                    {movie.maturityRating.replace('_', '-')}
+                  </Badge>
+                )}
+                
+                {movie.averageRating && (
+                  <div className="flex items-center gap-1">
+                    <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                    <span>{movie.averageRating.toFixed(1)}</span>
                   </div>
-                </div>
+                )}
               </div>
               
-              {/* Right column - Movie details */}
-              <div className="space-y-8">
-                <div className="space-y-4">
-                  <motion.h1 
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.1 }}
-                    className="text-4xl font-bold"
-                  >
-                    {movie.title}
-                  </motion.h1>
-                  
-                  <motion.div 
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.2 }}
-                    className="flex flex-wrap items-center gap-3"
-                  >
-                    {movie.releaseYear && (
-                      <div className="flex items-center">
-                        <Calendar className="h-4 w-4 mr-1 text-muted-foreground" />
-                        <span>{movie.releaseYear}</span>
-                      </div>
-                    )}
-                    
-                    {movie.duration && (
-                      <div className="flex items-center">
-                        <Clock className="h-4 w-4 mr-1 text-muted-foreground" />
-                        <span>{formatDuration(movie.duration)}</span>
-                      </div>
-                    )}
-                    
-                    {movie.maturityRating && (
-                      <Badge variant="outline" className="border-muted-foreground">
-                        {movie.maturityRating}
-                      </Badge>
-                    )}
-                    
-                    {movie.averageRating && (
-                      <div className="flex items-center">
-                        <Star className="h-4 w-4 mr-1 text-yellow-500" />
-                        <span>{movie.averageRating.toFixed(1)}</span>
-                      </div>
-                    )}
-                  </motion.div>
-                  
-                  <motion.div 
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.3 }}
-                    className="flex flex-wrap gap-2"
-                  >
-                    {movie.genres && movie.genres.map((genre: any) => (
-                      <Badge key={genre.id || genre.name} variant="secondary">
+              <p className="text-base text-muted-foreground mb-6">{movie.description}</p>
+              
+              {/* Genres */}
+              {movie.genres && movie.genres.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                    <Film className="h-4 w-4" />
+                    <span>Genres</span>
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {movie.genres.map((genre) => (
+                      <Badge key={genre.id} variant="secondary" className="text-xs">
                         {genre.name}
                       </Badge>
                     ))}
-                  </motion.div>
+                  </div>
                 </div>
+              )}
+              
+              <Separator className="my-6" />
+              
+              {/* Additional Details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {movie.director && (
+                  <div>
+                    <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <Award className="h-4 w-4" />
+                      <span>Director</span>
+                    </h3>
+                    <p className="text-muted-foreground">{movie.director}</p>
+                  </div>
+                )}
                 
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.4 }}
-                  className="space-y-4"
-                >
-                  <h2 className="text-xl font-semibold">Synopsis</h2>
-                  <p className="text-muted-foreground leading-relaxed">{movie.description}</p>
-                </motion.div>
+                {movie.studio && (
+                  <div>
+                    <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <Info className="h-4 w-4" />
+                      <span>Studio</span>
+                    </h3>
+                    <p className="text-muted-foreground">{movie.studio}</p>
+                  </div>
+                )}
                 
-                {movie.cast && movie.cast.length > 0 && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.5 }}
-                    className="space-y-4"
-                  >
-                    <h2 className="text-xl font-semibold">Cast</h2>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {movie.cast.map((castMember: any) => (
-                        <div key={castMember.id} className="flex items-center space-x-3">
-                          <div className="w-12 h-12 rounded-full overflow-hidden bg-card flex-shrink-0">
+                {movie.language && (
+                  <div>
+                    <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <Globe className="h-4 w-4" />
+                      <span>Language</span>
+                    </h3>
+                    <p className="text-muted-foreground">{movie.language}</p>
+                  </div>
+                )}
+                
+                {movie.country && (
+                  <div>
+                    <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <Globe className="h-4 w-4" />
+                      <span>Country</span>
+                    </h3>
+                    <p className="text-muted-foreground">{movie.country}</p>
+                  </div>
+                )}
+              </div>
+              
+              {/* Cast Section */}
+              {movie.cast && movie.cast.length > 0 && (
+                <>
+                  <Separator className="my-6" />
+                  
+                  <div>
+                    <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                      <Users className="h-5 w-5" />
+                      <span>Cast</span>
+                    </h3>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {movie.cast.slice(0, 6).map((castMember) => (
+                        <div key={castMember.id} className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center overflow-hidden">
                             {castMember.profileImage ? (
                               <Image
                                 src={castMember.profileImage}
                                 alt={castMember.name}
-                                width={48}
-                                height={48}
-                                className="object-cover w-full h-full"
+                                width={40}
+                                height={40}
+                                className="object-cover"
                               />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-muted">
-                                <Users className="h-6 w-6 text-muted-foreground" />
-                              </div>
+                              <Users className="h-5 w-5 text-muted-foreground" />
                             )}
                           </div>
                           <div>
-                            <p className="font-medium line-clamp-1">{castMember.name}</p>
-                            <p className="text-sm text-muted-foreground line-clamp-1">
+                            <p className="font-medium text-sm">{castMember.name}</p>
+                            <p className="text-xs text-muted-foreground">
                               {castMember.character || castMember.role}
                             </p>
                           </div>
                         </div>
                       ))}
                     </div>
-                  </motion.div>
-                )}
-                
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.6 }}
-                  className="bg-card/50 backdrop-blur-sm rounded-xl border border-border/50 p-6"
-                >
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      {movie.director && (
-                        <div className="flex items-start gap-3">
-                          <Award className="h-5 w-5 text-muted-foreground mt-0.5" />
-                          <div>
-                            <p className="text-sm text-muted-foreground">Director</p>
-                            <p>{movie.director}</p>
-                          </div>
-                        </div>
-                      )}
-                      
-                      {movie.studio && (
-                        <div className="flex items-start gap-3">
-                          <Film className="h-5 w-5 text-muted-foreground mt-0.5" />
-                          <div>
-                            <p className="text-sm text-muted-foreground">Studio</p>
-                            <p>{movie.studio}</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className="space-y-4">
-                      {movie.language && (
-                        <div className="flex items-start gap-3">
-                          <Globe className="h-5 w-5 text-muted-foreground mt-0.5" />
-                          <div>
-                            <p className="text-sm text-muted-foreground">Language</p>
-                            <p>{movie.language}</p>
-                          </div>
-                        </div>
-                      )}
-                      
-                      {movie.country && (
-                        <div className="flex items-start gap-3">
-                          <Globe className="h-5 w-5 text-muted-foreground mt-0.5" />
-                          <div>
-                            <p className="text-sm text-muted-foreground">Country</p>
-                            <p>{movie.country}</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
                   </div>
-                </motion.div>
-              </div>
-            </div>
+                </>
+              )}
+            </motion.div>
           </div>
         </div>
       </div>
-
+      
       {/* Trailer Modal */}
       <AnimatePresence>
         {showTrailer && (
@@ -556,115 +588,94 @@ const MoviesDetailsPage = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center"
+            className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
           >
-            <div className="w-full h-full max-h-[90vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4">
-                <Button
-                  variant="ghost"
-                  className="text-white hover:bg-white/10 flex items-center"
-                  onClick={handleCloseTrailer}
-                >
-                  <ChevronLeft className="h-5 w-5 mr-2" />
-                  Back to movie
-                </Button>
-                
-                {movie?.title && (
-                  <h2 className="text-white text-lg font-medium hidden md:block">
-                    {movie.title} - Official Trailer
-                  </h2>
-                )}
-                
-                <div className="w-[100px]"></div> {/* Spacer for alignment */}
-              </div>
-              
-              <div className="flex-1 w-full flex items-center justify-center px-4">
-                <div className="w-full h-full max-w-[90vw] max-h-[80vh]">
-                  {movie?.trailerType === "URL" && youtubeId ? (
-                    <iframe
-                      ref={iframeRef}
-                      src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&rel=0`}
-                      title={`${movie.title} Trailer`}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                      className="w-full h-full rounded-lg"
-                      style={{ minHeight: "70vh" }}
-                    ></iframe>
-                  ) : movie?.trailerType === "UPLOADED" && (movie.trailerUrl || movie.trailerFile) ? (
-                    <div className="relative w-full h-full" style={{ minHeight: "70vh" }}>
-                      <video
-                        ref={videoRef}
-                        src={movie.trailerUrl || movie.trailerFile}
-                        className="w-full h-full object-contain rounded-lg"
-                        onTimeUpdate={handleTimeUpdate}
-                        onEnded={() => setIsPlaying(false)}
-                      />
-                      
-                      {/* Video Controls */}
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-                        <div className="flex flex-col space-y-2">
-                          <Progress value={progress} className="h-1.5 bg-gray-600" />
-                          
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-4">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-white hover:bg-white/10"
-                                onClick={togglePlay}
-                              >
-                                {isPlaying ? (
-                                  <Pause className="h-6 w-6" />
-                                ) : (
-                                  <Play className="h-6 w-6" />
-                                )}
-                              </Button>
-                              
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-white hover:bg-white/10"
-                                onClick={toggleMute}
-                              >
-                                {isMuted ? (
-                                  <VolumeX className="h-6 w-6" />
-                                ) : (
-                                  <Volume2 className="h-6 w-6" />
-                                )}
-                              </Button>
-                              
-                              {videoRef.current && (
-                                <div className="text-white text-sm">
-                                  {formatTime(videoRef.current.currentTime)} / {formatTime(videoRef.current.duration)}
-                                </div>
-                              )}
-                            </div>
-                            
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-white hover:bg-white/10"
-                              onClick={handleFullscreen}
-                            >
-                              <Maximize className="h-6 w-6" />
-                            </Button>
-                          </div>
-                        </div>
+            <div className="absolute top-4 right-4">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-full bg-black/50 hover:bg-black/70 text-white"
+                onClick={handleCloseTrailer}
+              >
+                <X className="h-6 w-6" />
+              </Button>
+            </div>
+            
+            <div className="w-full max-w-5xl aspect-video bg-black relative rounded-lg overflow-hidden">
+              {movie?.trailerType === "URL" && movie.trailerUrl ? (
+                <iframe
+                  ref={iframeRef}
+                  src={movie.trailerUrl}
+                  className="absolute inset-0 w-full h-full"
+                  allowFullScreen
+                  allow="autoplay; encrypted-media"
+                ></iframe>
+              ) : movie?.trailerType === "UPLOADED" && movie.trailerFile ? (
+                <>
+                  <video
+                    ref={videoRef}
+                    src={movie.trailerFile}
+                    className="absolute inset-0 w-full h-full"
+                    onTimeUpdate={handleTimeUpdate}
+                    onEnded={() => setIsPlaying(false)}
+                    playsInline
+                    controls={false}
+                  ></video>
+                  
+                  {/* Video Controls */}
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+                    <Progress value={progress} className="h-1 mb-4" />
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-white hover:bg-white/10"
+                          onClick={handlePlayPause}
+                        >
+                          {isPlaying ? (
+                            <Pause className="h-5 w-5" />
+                          ) : (
+                            <Play className="h-5 w-5" />
+                          )}
+                        </Button>
+                        
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-white hover:bg-white/10"
+                          onClick={handleMuteToggle}
+                        >
+                          {isMuted ? (
+                            <VolumeX className="h-5 w-5" />
+                          ) : (
+                            <Volume2 className="h-5 w-5" />
+                          )}
+                        </Button>
                       </div>
+                      
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-white hover:bg-white/10"
+                        onClick={handleFullscreen}
+                      >
+                        <Maximize className="h-5 w-5" />
+                      </Button>
                     </div>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center" style={{ minHeight: "70vh" }}>
-                      <p className="text-white">No trailer available</p>
-                    </div>
-                  )}
+                  </div>
+                </>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <p className="text-white">Trailer not available</p>
                 </div>
-              </div>
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </div>
   );
 };
 
-export default MoviesDetailsPage;
+export default MovieDetailsPage;

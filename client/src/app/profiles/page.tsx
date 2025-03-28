@@ -1,22 +1,45 @@
 "use client";
 
-import React from "react";
-import { useUserStore } from "@/store/useUserStore";
+import React, { useEffect, useState } from "react";
+import { useAuthStore } from "@/store/useAuthStore";
 import Image from "next/image";
 import { FiEdit2, FiPlus } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 
 const ProfilesPage = () => {
-  const { user, setActiveProfile } = useUserStore();
+  const { user, isAuthenticated } = useAuthStore();
   const router = useRouter();
+  const [isLoading, setIsLoading] = useState(true);
+  
+  useEffect(() => {
+    // Check authentication status
+    if (!isAuthenticated || !user) {
+      router.replace("/auth/login");
+      return;
+    }
+
+    // Redirect admin without profiles directly to admin dashboard
+    if (user.role === "ADMIN" && (!user.profile || user.profile.length === 0)) {
+      router.replace("/admin");
+      return;
+    }
+
+    setIsLoading(false);
+  }, [isAuthenticated, user, router]);
 
   const handleProfileSelect = (profile: any) => {
-    setActiveProfile(profile);
-    // Check user role and redirect accordingly
-    if (user?.role === "ADMIN") {
-      router.push("/admin");
-    } else {
-      router.push("/browse");
+    try {
+      // Use the profile ID directly instead of the whole profile object
+      useAuthStore.getState().setActiveProfile(profile.id);
+      
+      // Check user role and redirect accordingly
+      if (user?.role === "ADMIN") {
+        router.replace("/admin");
+      } else {
+        router.replace("/browse");
+      }
+    } catch (error) {
+      console.error("Error selecting profile:", error);
     }
   };
 
@@ -25,18 +48,17 @@ const ProfilesPage = () => {
     router.push(`/profiles/edit/${profileId}`);
   };
 
-  console.log(user);
-
-  if (!user) {
-    router.push("/auth/login");
-    return null;
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-neutral-900 to-black text-white flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-red-600"></div>
+      </div>
+    );
   }
 
-  // Redirect admin without profiles directly to admin dashboard
-  if (user.role === "ADMIN" && (!user.profiles || user.profiles.length === 0)) {
-    router.push("/admin");
-    return null;
-  }
+  // Get profiles from the user object
+  const profiles = user?.profile || [];
+  console.log("User object:", user);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-neutral-900 to-black text-white">
@@ -47,7 +69,7 @@ const ProfilesPage = () => {
 
         <div className="flex flex-wrap justify-center gap-8 max-w-5xl mx-auto">
           {/* Existing Profiles */}
-          {user.profiles.map((profile) => (
+          {Array.isArray(profiles) && profiles.map((profile) => (
             <div key={profile.id} className="group flex flex-col items-center">
               <div className="relative">
                 <button
@@ -67,41 +89,33 @@ const ProfilesPage = () => {
                   onClick={(e) => handleEditProfile(e, profile.id)}
                   className="absolute top-2 right-2 p-2 bg-black/50 rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-600 duration-200 transform translate-y-2 group-hover:translate-y-0"
                 >
-                  <FiEdit2 size={16} />
+                  <FiEdit2 className="text-white" size={16} />
                 </button>
               </div>
-              <span className="mt-4 text-lg font-medium text-gray-400 group-hover:text-white duration-200">
-                {profile.name}
-              </span>
+              <span className="mt-3 text-lg font-medium">{profile.name}</span>
+              {profile.isKids && (
+                <span className="mt-1 text-xs px-2 py-1 bg-blue-500 rounded-full">
+                  Kids
+                </span>
+              )}
             </div>
           ))}
 
           {/* Add Profile Button */}
-          {user.profiles.length < (user.subscription?.maxProfiles || 5) && (
+          {Array.isArray(profiles) && profiles.length < 5 && (
             <div className="flex flex-col items-center">
               <button
-                onClick={() => router.push("/profiles/new")}
-                className="w-[150px] h-[150px] rounded-md border-2 border-gray-600 flex items-center justify-center hover:border-red-600 hover:bg-red-600/10 duration-300 group"
+                onClick={() => router.push("/profiles/create")}
+                className="w-[150px] h-[150px] rounded-md bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center group duration-300 border-2 border-transparent hover:border-red-600"
               >
                 <FiPlus
-                  size={40}
-                  className="text-gray-600 group-hover:text-red-600 duration-300"
+                  size={50}
+                  className="text-neutral-400 group-hover:text-white duration-300"
                 />
               </button>
-              <span className="mt-4 text-lg font-medium text-gray-400 group-hover:text-white duration-200">
-                Add Profile
-              </span>
+              <span className="mt-3 text-lg font-medium">Add Profile</span>
             </div>
           )}
-        </div>
-
-        <div className="text-center mt-16">
-          <button
-            onClick={() => router.push("/profiles/manage")}
-            className="px-8 py-3 text-lg border-2 border-gray-600 hover:border-white hover:bg-white/5 rounded-md duration-300 tracking-wide"
-          >
-            Manage Profiles
-          </button>
         </div>
       </div>
     </div>

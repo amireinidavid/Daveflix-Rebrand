@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/store/useAuthStore";
-import { useUserStore } from "@/store/useUserStore";
 
 const formSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -31,19 +30,15 @@ const formSchema = z.object({
 export default function LoginPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const { login, error, clearError } = useAuthStore();
-  const { fetchUser, user } = useUserStore();
+  const { login, error, clearError, isAuthenticated, user } = useAuthStore();
 
+  // Check authentication status only once when component mounts
   useEffect(() => {
-    if (user) {
-      // If user is admin, redirect to admin dashboard
-      if (user.role === "ADMIN") {
-        router.push("/admin");
-      } else {
-        router.push("/profiles");
-      }
+    if (isAuthenticated && user) {
+      // Redirect directly to browse page instead of profiles
+      router.replace("/browse");
     }
-  }, [user, router]);
+  }, [isAuthenticated, user, router]);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -58,10 +53,10 @@ export default function LoginPage() {
       setIsLoading(true);
       clearError();
       await login(values);
-      // After successful login, fetch user data
-      await fetchUser();
+      // After successful login, redirect to browse page
+      router.replace("/browse");
     } catch (error) {
-      console.error(error);
+      console.error("Login error:", error);
     } finally {
       setIsLoading(false);
     }
@@ -168,10 +163,14 @@ export default function LoginPage() {
                 hover:shadow-primary/25"
               disabled={isLoading}
             >
-              {isLoading && (
-                <BiLoaderAlt className="mr-2 h-5 w-5 animate-spin" />
+              {isLoading ? (
+                <>
+                  <BiLoaderAlt className="mr-2 h-5 w-5 animate-spin" />
+                  Signing In...
+                </>
+              ) : (
+                "Sign In"
               )}
-              Sign In
             </Button>
           </form>
         </Form>

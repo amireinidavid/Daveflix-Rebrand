@@ -22,7 +22,6 @@ import {
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useUserStore } from "@/store/useUserStore";
 import { useAuthStore } from "@/store/useAuthStore";
 import { LogOut } from "lucide-react";
 
@@ -31,14 +30,15 @@ const mainNavItems = [
   { name: "Movies", href: "/movies", icon: BiMovie },
   { name: "TV Shows", href: "/tv", icon: BiTv },
   { name: "New & Popular", href: "/new", icon: BiTrendingUp },
-  { name: "My List", href: "/my-list", icon: BiBookmark },
+  { name: "My List", href: "/list", icon: BiBookmark },
 ];
 
 export default function Header() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const pathname = usePathname();
-  const { user, activeProfile } = useUserStore();
+  const { user, logout } = useAuthStore();
+  const activeProfile = user?.activeProfile;
   const router = useRouter();
   // Handle scroll effect
   useEffect(() => {
@@ -48,6 +48,17 @@ export default function Header() {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await logout();
+      // Force a page refresh to clear all client-side state
+      window.location.href = '/auth/login';
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
 
   return (
     <header
@@ -160,33 +171,25 @@ export default function Header() {
                           Account Settings
                         </Link>
                         <Link
-                          href="/watchlist"
+                          href="/profiles"
                           className="flex items-center gap-3 px-3 py-2 text-sm rounded-md hover:bg-primary/10 hover:text-primary transition-colors"
                         >
-                          <BiBookmark className="h-4 w-4" />
-                          My Watchlist
+                          <BiUser className="h-4 w-4" />
+                          Manage Profiles
                         </Link>
                         <Link
-                          href="/history"
+                          href="/watch-history"
                           className="flex items-center gap-3 px-3 py-2 text-sm rounded-md hover:bg-primary/10 hover:text-primary transition-colors"
                         >
                           <BiHistory className="h-4 w-4" />
                           Watch History
                         </Link>
-                      </div>
-
-                      {/* Logout */}
-                      <div className="p-2 border-t border-border/50">
                         <button
+                          onClick={handleLogout}
                           className="flex w-full items-center gap-3 px-3 py-2 text-sm rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
-                          onClick={() => {
-                            const logout = useAuthStore.getState().logout;
-                            logout();
-                            router.push("/auth/login");
-                          }}
                         >
-                          <LogOut className="h-4 w-4" />
-                          <span>Logout</span>
+                          <BiLogOut className="h-4 w-4" />
+                          Sign Out
                         </button>
                       </div>
                     </motion.div>

@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import "./globals.css";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
+import MobileNavBar from "@/components/layout/MobileNavBar";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -31,9 +32,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Header />
-        <main className="pt-16 md:pt-20">{children}</main>
+        <main className="pt-16 md:pt-20 pb-20 md:pb-0">{children}</main>
         <Footer />
-
+        <MobileNavBar />
       </body>
     </html>
   );

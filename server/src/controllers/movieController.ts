@@ -1814,11 +1814,21 @@ export const toggleLike = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const userId = req.user.id;
-    const profileId = req.user.activeProfileId;
+    const userId = req.user?.userId;
+    
+    // Get the active profile ID from the correct location in the request
+    // Access the ID from the activeProfile object
+    const profileId = req.user?.activeProfile?.id;
+
+    if (!userId) {
+       res.status(401).json({
+        success: false,
+        message: "User authentication required",
+      });
+    }
 
     if (!profileId) {
-      res.status(400).json({
+       res.status(400).json({
         success: false,
         message: "Active profile is required",
       });
@@ -1830,7 +1840,7 @@ export const toggleLike = async (
     });
 
     if (!content) {
-      res.status(404).json({
+       res.status(404).json({
         success: false,
         message: "Content not found",
       });
@@ -1885,14 +1895,14 @@ export const toggleLike = async (
       });
     }
 
-    res.status(200).json({
+     res.status(200).json({
       success: true,
       message: `Content ${action} successfully`,
       data: { liked: action === "liked" },
     });
   } catch (error) {
     console.error("Error toggling like:", error);
-    res.status(500).json({
+     res.status(500).json({
       success: false,
       message: "Failed to toggle like",
       error: error instanceof Error ? error.message : "Unknown error",
@@ -1909,20 +1919,37 @@ export const toggleWatchlist = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { id } = req.params;
-    const userId = req.user.id;
-    const profileId = req.user.activeProfileId;
+    const userId = req.user?.userId;
+    const profileId = req.user?.activeProfile?.id;
+    const contentId = req.params.contentId;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+      return;
+    }
 
     if (!profileId) {
       res.status(400).json({
         success: false,
         message: "Active profile is required",
       });
+      return;
+    }
+
+    if (!contentId) {
+      res.status(400).json({
+        success: false,
+        message: "Content ID is required",
+      });
+      return;
     }
 
     // Check if content exists
     const content = await prisma.content.findUnique({
-      where: { id },
+      where: { id: contentId },
     });
 
     if (!content) {
@@ -1930,47 +1957,49 @@ export const toggleWatchlist = async (
         success: false,
         message: "Content not found",
       });
+      return;
     }
 
-    // Check if content is already in watchlist
-    const existingWatchlist = await prisma.watchlist.findFirst({
+    // Check if item is already in watchlist
+    const existingItem = await prisma.watchlist.findFirst({
       where: {
-        contentId: id,
         userId,
         profileId,
+        contentId,
       },
     });
 
-    let action;
+    let result;
+    let message;
 
-    if (existingWatchlist) {
+    if (existingItem) {
       // Remove from watchlist
-      await prisma.watchlist.delete({
-        where: { id: existingWatchlist.id },
+      result = await prisma.watchlist.delete({
+        where: { id: existingItem.id },
       });
-      action = "removed from";
+      message = "Removed from watchlist";
     } else {
       // Add to watchlist
-      await prisma.watchlist.create({
+      result = await prisma.watchlist.create({
         data: {
-          contentId: id,
           userId,
           profileId,
+          contentId,
         },
       });
-      action = "added to";
+      message = "Added to watchlist";
     }
 
     res.status(200).json({
       success: true,
-      message: `Content ${action} watchlist successfully`,
-      data: { inWatchlist: action === "added to" },
+      message,
+      data: result,
     });
   } catch (error) {
     console.error("Error toggling watchlist:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to toggle watchlist",
+      message: "Failed to update watchlist",
       error: error instanceof Error ? error.message : "Unknown error",
     });
   }
@@ -1985,14 +2014,23 @@ export const getWatchlist = async (
   res: Response
 ): Promise<void> => {
   try {
-    const userId = req.user.id;
-    const profileId = req.user.activeProfileId;
+    const userId = req.user?.userId;
+    const profileId = req.user?.activeProfile?.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+      return;
+    }
 
     if (!profileId) {
       res.status(400).json({
         success: false,
         message: "Active profile is required",
       });
+      return; // Add this return statement to prevent further execution
     }
 
     const watchlist = await prisma.watchlist.findMany({
@@ -2038,7 +2076,6 @@ export const getWatchlist = async (
     });
   }
 };
-
 /**
  * Record watch history
  * POST /api/content/:id/watch
@@ -3167,6 +3204,69 @@ export const getAllGenres = async (
     res.status(500).json({
       success: false,
       message: "Failed to get genres",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
+
+/**
+ * Get user's likes
+ * GET /api/user/likes
+ */
+export const getUserLikes = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    const profileId = req.user?.activeProfile?.id;
+
+    if (!userId) {
+       res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!profileId) {
+       res.status(400).json({
+        success: false,
+        message: "Active profile is required",
+      });
+    }
+
+    // Get all likes for this user and profile
+    const likes = await prisma.like.findMany({
+      where: {
+        userId,
+        profileId,
+      },
+      include: {
+        contentItem: {
+          select: {
+            id: true,
+            title: true,
+            posterImage: true,
+            type: true,
+            releaseYear: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+     res.status(200).json({
+      success: true,
+      message: "Likes retrieved successfully",
+      data: likes,
+    });
+  } catch (error) {
+    console.error("Error getting likes:", error);
+     res.status(500).json({
+      success: false,
+      message: "Failed to get likes",
       error: error instanceof Error ? error.message : "Unknown error",
     });
   }

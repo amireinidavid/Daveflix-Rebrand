@@ -18,7 +18,8 @@ export const authenticate = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
+    // Get token from cookies instead of Authorization header
+    const token = req.cookies.accessToken;
 
     if (!token) {
       res.status(401).json({
@@ -28,13 +29,13 @@ export const authenticate = async (
       return;
     }
 
-    // Now TypeScript knows token is definitely a string
+    // Verify the token
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET || ""
     ) as jwt.JwtPayload;
 
-    if (!decoded.id) {
+    if (!decoded.userId) {
       res.status(401).json({
         success: false,
         message: "Invalid token",
@@ -42,8 +43,9 @@ export const authenticate = async (
       return;
     }
 
+    // Find the user
     const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
+      where: { id: decoded.userId },
       include: { activeProfile: true },
     });
 
@@ -55,7 +57,14 @@ export const authenticate = async (
       return;
     }
 
-    req.user = user;
+    // Set user in request
+    req.user = {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      activeProfile: user.activeProfile
+    };
+    
     next();
   } catch (error) {
     res.status(401).json({
@@ -72,14 +81,8 @@ export const protect = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    let token;
-
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith("Bearer")
-    ) {
-      token = req.headers.authorization.split(" ")[1];
-    }
+    // Get token from cookies
+    const token = req.cookies.accessToken;
 
     if (!token) {
       res.status(401).json({
@@ -97,7 +100,7 @@ export const protect = async (
 
     // Get user from token
     const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
+      where: { id: decoded.userId },
     });
 
     if (!user) {
@@ -108,7 +111,12 @@ export const protect = async (
       return;
     }
 
-    req.user = user;
+    req.user = {
+      userId: user.id,
+      email: user.email,
+      role: user.role
+    };
+    
     next();
   } catch (error) {
     res.status(401).json({

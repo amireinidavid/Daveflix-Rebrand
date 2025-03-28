@@ -22,6 +22,8 @@ router.use(authenticate);
 router.post("/content/:id/rate", movieController.rateContent);
 router.post("/content/:id/review", movieController.addReview);
 router.post("/content/:id/like", movieController.toggleLike);
+router.get('/likes', movieController.getUserLikes);
+
 // router.post("/content/:id/watch-history", movieController.recordWatchHistory);
 
 // Watchlist management

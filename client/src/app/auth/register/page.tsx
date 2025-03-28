@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/store/useAuthStore";
-import { useUserStore } from "@/store/useUserStore";
 
 const formSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -39,14 +38,20 @@ const formSchema = z.object({
 export default function RegisterPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const { register, error, clearError } = useAuthStore();
-  const { user } = useUserStore();
+  const { register, error, clearError, isAuthenticated, user } = useAuthStore();
 
+  // Check authentication status and redirect if already authenticated
   useEffect(() => {
-    if (user) {
-      router.push("/profiles");
+    if (isAuthenticated && user) {
+      // If user has an active profile, go to browse
+      if (user.activeProfile) {
+        router.replace("/browse");
+      } else {
+        // If no active profile, go to profiles page
+        router.replace("/profiles");
+      }
     }
-  }, [user, router]);
+  }, [isAuthenticated, user, router]);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -63,9 +68,10 @@ export default function RegisterPage() {
       setIsLoading(true);
       clearError();
       await register(values);
-      router.push("/profiles");
+      // Don't redirect here - let the useEffect handle it
     } catch (error) {
-      console.error(error);
+      console.error("Registration error:", error);
+      // Error is already set in the store by the register function
     } finally {
       setIsLoading(false);
     }
@@ -75,7 +81,7 @@ export default function RegisterPage() {
     <div className="min-h-screen relative flex items-center justify-center">
       {/* Background Image */}
       <Image
-        src="/images/auth.jpg" // You'll need to add this image to your public folder
+        src="/images/auth.jpg"
         alt="Background"
         fill
         className="object-cover object-center"
@@ -120,7 +126,7 @@ export default function RegisterPage() {
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
                 name="firstName"
@@ -219,10 +225,14 @@ export default function RegisterPage() {
                 hover:shadow-primary/25"
               disabled={isLoading}
             >
-              {isLoading && (
-                <BiLoaderAlt className="mr-2 h-5 w-5 animate-spin" />
+              {isLoading ? (
+                <>
+                  <BiLoaderAlt className="mr-2 h-5 w-5 animate-spin" />
+                  Creating Account...
+                </>
+              ) : (
+                "Create Account"
               )}
-              Create Account
             </Button>
           </form>
         </Form>
