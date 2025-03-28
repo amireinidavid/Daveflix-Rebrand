@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 async function main() {
-  // // Hash the admin password
+  // // // Hash the admin password
   // const salt = await bcrypt.genSalt(10);
   // const hashedPassword = await bcrypt.hash("daveflix123", salt);
 

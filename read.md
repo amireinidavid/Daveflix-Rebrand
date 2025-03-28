@@ -1,4 +1,5 @@
 "use client";
+DATABASE_URL=postgresql://daveflix:daveflix@localhost:5433/daveflix
 
 import { useEffect } from "react";
 import { motion } from "framer-motion";
