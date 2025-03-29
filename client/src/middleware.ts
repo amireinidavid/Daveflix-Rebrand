@@ -1,6 +1,5 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { jwtVerify } from 'jose';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
 // Define paths that don't require authentication
 const publicPaths = [
@@ -14,6 +13,14 @@ const publicPaths = [
   '/favicon.ico',
   '/images',
   '/fonts',
+];
+
+// Define auth paths that authenticated users should be redirected from
+const authPaths = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/forgot-password',
+  '/auth/reset-password',
 ];
 
 // Define paths that require admin access
@@ -34,6 +41,13 @@ const isPublicPath = (path: string) => {
   );
 };
 
+// Function to check if a path is an auth path
+const isAuthPath = (path: string) => {
+  return authPaths.some(authPath => 
+    path === authPath || path.startsWith(`${authPath}/`)
+  );
+};
+
 // Function to check if a path is admin-only
 const isAdminPath = (path: string) => {
   return adminPaths.some(adminPath => 
@@ -41,83 +55,52 @@ const isAdminPath = (path: string) => {
   );
 };
 
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
-  // Allow public paths without authentication
+  // Get the token from cookies
+  const token = request.cookies.get('token')?.value;
+  const userRole = request.cookies.get('role')?.value;
+  const activeProfile = request.cookies.get('activeProfile')?.value;
+  
+  // If user is authenticated and trying to access auth pages, redirect to browse
+  if (token && isAuthPath(pathname)) {
+    return NextResponse.redirect(new URL('/browse', request.url));
+  }
+  
+  // Always allow access to public paths
   if (isPublicPath(pathname)) {
     return NextResponse.next();
   }
   
-  // Get the token from cookies
-  const token = request.cookies.get('token')?.value;
-  
   // If no token is found and the path is not public, redirect to login
-  if (!token) {
-    const url = new URL('/auth/login', request.url);
-    url.searchParams.set('callbackUrl', encodeURI(request.url));
-    return NextResponse.redirect(url);
+  // if (!token) {
+  //   const url = new URL('/auth/login', request.url);
+  //   // Only add callback for non-login pages to prevent redirect loops
+  //   if (pathname !== '/auth/login') {
+  //     url.searchParams.set('callbackUrl', pathname);
+  //   }
+  //   return NextResponse.redirect(url);
+  // }
+  
+  // Check if user has an active profile selected
+  if (pathname !== '/profiles' && !activeProfile && !isPublicPath(pathname)) {
+    return NextResponse.redirect(new URL('/profiles', request.url));
   }
   
-  try {
-    // Verify the JWT token
-    const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'your-secret-key');
-    const { payload } = await jwtVerify(token, secret);
-    
-    // Check if user has an active profile selected
-    if (pathname !== '/profiles' && !payload.activeProfile && !isPublicPath(pathname)) {
-      return NextResponse.redirect(new URL('/profiles', request.url));
-    }
-    
-    // Check if user is trying to access admin routes without admin role
-    if (isAdminPath(pathname) && payload.role !== 'ADMIN') {
-      return NextResponse.redirect(new URL('/browse', request.url));
-    }
-    
-    // Check if subscription is required and user doesn't have one
-    if (
-      !isPublicPath(pathname) && 
-      !isAdminPath(pathname) && 
-      pathname !== '/subscription' && 
-      payload.subscriptionStatus !== 'ACTIVE'
-    ) {
-      return NextResponse.redirect(new URL('/subscription', request.url));
-    }
-    
-    // Rate limiting for API routes
-    if (pathname.startsWith('/api/') && !isPublicPath(pathname)) {
-      const ip = request.ip || '';
-      const rateLimit = request.headers.get('x-rate-limit');
-      
-      if (rateLimit && parseInt(rateLimit) > 100) {
-        return new NextResponse(
-          JSON.stringify({ success: false, message: 'Rate limit exceeded' }),
-          { status: 429, headers: { 'content-type': 'application/json' } }
-        );
-      }
-    }
-    
-    // Add user info to headers for server components
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set('x-user-id', payload.userId as string);
-    requestHeaders.set('x-user-role', payload.role as string);
-    
-    if (payload.activeProfile) {
-      requestHeaders.set('x-profile-id', payload.activeProfile as string);
-    }
-    
-    return NextResponse.next({
-      request: {
-        headers: requestHeaders,
-      },
-    });
-    
-  } catch (error) {
-    // If token verification fails, clear the invalid token and redirect to login
-    const response = NextResponse.redirect(new URL('/auth/login', request.url));
-    response.cookies.delete('token');
-    return response;
+  // Check if user is trying to access admin routes without admin role
+  if (isAdminPath(pathname) && userRole !== 'ADMIN') {
+    return NextResponse.redirect(new URL('/browse', request.url));
   }
+  
+  // Add user info to headers for server components if needed
+  const requestHeaders = new Headers(request.headers);
+  
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 }
 
 // Configure the middleware to run on specific paths
@@ -131,6 +114,5 @@ export const config = {
      * - public folder
      */
     '/((?!_next/static|_next/image|favicon.ico|public).*)',
-    '/api/:path*',
   ],
-}; 
+};
