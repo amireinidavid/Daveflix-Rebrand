@@ -84,9 +84,9 @@ export function middleware(request: NextRequest) {
   // }
   
   // Check if user has an active profile selected
-  if (pathname !== '/profiles' && !activeProfile && !isPublicPath(pathname)) {
-    return NextResponse.redirect(new URL('/profiles', request.url));
-  }
+  // if (pathname !== '/profiles' && !activeProfile && !isPublicPath(pathname)) {
+  //   return NextResponse.redirect(new URL('/profiles', request.url));
+  // }
   
   // Check if user is trying to access admin routes without admin role
   if (isAdminPath(pathname) && userRole !== 'ADMIN') {
