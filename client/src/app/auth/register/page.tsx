@@ -48,7 +48,7 @@ export default function RegisterPage() {
         router.replace("/browse");
       } else {
         // If no active profile, go to profiles page
-        router.replace("/profiles");
+        router.replace("/browse");
       }
     }
   }, [isAuthenticated, user, router]);
