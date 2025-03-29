@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import { UserRole } from "@prisma/client";
+import { checkRedisHealth } from "../config/redis";
 
 // Define types for request user
 interface RequestWithUser extends Request {
@@ -38,14 +39,16 @@ async function setAuthCookies(
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     maxAge: 60 * 60 * 1000, // 1 hour
   });
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    path: "/",
+    domain: process.env.NODE_ENV === "production" ? process.env.COOKIE_DOMAIN : undefined
   });
 }
 
@@ -625,6 +628,35 @@ export const deleteAccount = async (req: RequestWithUser, res: Response): Promis
     res.status(500).json({ 
       success: false,
       error: "Failed to delete account" 
+    });
+  }
+};
+
+// Add this debug function
+export const debugTokens = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const refreshToken = req.cookies['refresh-token'];
+    const accessToken = req.headers.authorization?.split(' ')[1];
+    
+    res.json({
+      success: true,
+      debug: {
+        cookies: req.cookies,
+        refreshTokenExists: !!refreshToken,
+        accessTokenExists: !!accessToken,
+        headers: {
+          authorization: req.headers.authorization,
+          cookie: req.headers.cookie,
+        },
+        redisConnected: await checkRedisHealth(),
+      }
+    });
+  } catch (error) {
+    console.error("Debug tokens error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error debugging tokens",
+      error: error instanceof Error ? error.message : "Unknown error"
     });
   }
 };

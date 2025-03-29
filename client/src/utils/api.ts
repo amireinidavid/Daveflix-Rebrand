@@ -1,5 +1,5 @@
-// export const API_BASE_URL = "http://localhost:5000";
-export const API_BASE_URL = "https://daveflixnew-server.vercel.app";
+export const API_BASE_URL = "http://localhost:5000";
+// export const API_BASE_URL = "https://daveflixnew-server.vercel.app";
 
 export const API_ROUTES = {
   AUTH: {
@@ -119,4 +119,30 @@ export const API_ROUTES = {
   GENRE: {
     ALL: `${API_BASE_URL}/api/content/genres`,
   },
+};
+
+// Add proper error handling for token refresh
+const refreshAccessToken = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/refresh-token`, {
+      method: 'POST',
+      credentials: 'include', // Important for cookies
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      console.error('Token refresh failed:', await response.text());
+      throw new Error('Failed to refresh token');
+    }
+    
+    const data = await response.json();
+    return data.accessToken;
+  } catch (error) {
+    console.error('Error refreshing token:', error);
+    // Force logout on refresh failure
+    window.location.href = '/auth/login?session=expired';
+    throw error;
+  }
 };
